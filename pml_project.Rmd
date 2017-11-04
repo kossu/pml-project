@@ -1,0 +1,150 @@
+---
+title: "Practical Machine Learning - Project"
+author: "MK"
+date: "11/04/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+<h3>Introduction and short summary</h3>
+
+The aim of this project was to recognize whether people exercising with dumbbells did the exercise correctly by analysing data collected by accelerometers on the belt, forearm, arm, and on the dumbbell on the 6 participants. Participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Details of the data and the original research can be found [here]( http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har#weight_lifting_exercises).
+
+The data was split into a 19622x160 and [training set](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+ a 20x160 [testing set](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+. After cleaning up the data I ended up using a training set of 19622x53. Most of the variables that I dropped I either did not consider to be valuable in prediction or they had too many missing values to be useful.
+
+The data (training set) was then split up into a training and test set 75% and 25%. I built the models using this training set and used predictions for the test set in assessing the out of sample error rate. 
+
+In total, I tried 6 different models, boosting, Random Forest, LDA, Naive Bayes, KNN and bagged CART. The most accurate one was the random forest model and I used that to predict the actual test cases.
+
+I’ll start by going over how I cleaned the data (and split it up), then go over the models and choices I made with them (including cross validation / bootstrapping) and then comment on their accuracy and expected out of sample errors. 
+
+```{r libraries, echo=FALSE, message=FALSE, warning=FALSE}
+library(doMC)
+registerDoMC(cores = 2)
+library(caret)
+set.seed(56789)
+setwd("~/Google Drive/Data Science/git/pml")
+```
+<h3>Loading and cleaning data</h3>
+
+I'll start by loading and cleaning the data. I’ll start by removing the first 7 columns, which I do not believe would help in prediction. I’ll also convert all the remaining columns into numeric and remove all variables that have > 50% NAs. For the testing data set, I’ll just convert all columns into numeric (only relevant variables will be used, no need to remove "extra colums").
+
+I’ll also split the training set into a training set (75%) and a test set (25%). I’ll build the models using the training set and use the predictions for the test set to estimate the out-of-sample error. 
+
+```{r clean_up_data, cache=TRUE, message=FALSE, warning=FALSE}
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+
+y <- training$classe # copy Y
+training <- training[,-c(1:7, 160)] # drop X, timestamps, windows etc... AND Y!!!
+training <- data.frame(apply(training, 2, function(x) as.numeric(x))) # change into numeric format
+training$classe <- y # add back Y
+nas <- apply(training, 2, function(x) mean(is.na(x))) # % of NAs in cols
+ind <- 0.50 > nas # index of all where less than X % NAS
+training <- training[,ind] # drop all but indexed columns
+rm(list=c("ind", "nas", "y")) #cleanup
+# testing: no need to remove unused columns, just making sure data is numeric
+testing <- data.frame(apply(testing, 2, function(x) as.numeric(x))) # change into numeric format
+
+# split data, 75 % train 25 % test
+inTrain <- createDataPartition(training$classe,p=0.75, list=FALSE)
+tra <- training[inTrain,] # training set
+tes <- training[-inTrain,] # testing set
+rm("inTrain") # cleanup
+
+```
+<h3>Building models - model accuracy</h3>
+
+In this section, I’ll build the models and asses their accuracy. I’ll build six models on the training set: 1) boosting, 2) random forest, 3) LDA, 4) Naive Bayes, 5) KNN and 6) bagged cart -model. 
+
+I estimated the random forest model and the bagged cart model using bootstrapping repeated 10 times and the other models using 5-fold cross validation repeated 10 times. 
+
+Based on this analysis the most accurate model is Random Forest. I’ve included the plots for the three most accurate models, RF, bagged Cart and boosting. Based on RF-model’s accuracy, the out of sample error could be as low as 0.006 (1 – accuracy,) but it will most likely be higher when using new (actual) data.
+
+```{r boosting, echo=TRUE, cache=TRUE, warning=FALSE}
+# 1. Boosting (with 5-fold cross validation repeated 10 times)
+    tc1 <- trainControl(method = "repeatedcv", number = 5, repeats = 10) # trainControl args
+    f1 <- train(classe ~., "gbm", data = tra, 
+                trControl = tc1, verbose=FALSE)
+    f1$finalModel # print final model
+    pr1 <- predict(f1, tes) # predictions for model 1
+    mod1 <- confusionMatrix(pr1, tes$classe)$overall[1] # model 1
+    mod1
+    plot(f1)
+```
+```{r rf, echo=TRUE, cache=TRUE, warning=FALSE}
+# 2. Random forest (with bootsrapping repeated 10 times)
+    tc2 <- trainControl(method="boot", number=10) # trainControl args
+    f2 <- train(classe ~., "rf", data = tra, 
+                trControl = tc2, verbose = FALSE, ntree=500) # model 2 - random forest model
+    
+    f2$finalModel # print final model
+    pr2 <- predict(f2, tes) # prediction for model 2
+    mod2 <- confusionMatrix(pr2, tes$classe)$overall[1] # model 2
+    mod2
+    plot(f2)
+```
+```{r lda, echo=TRUE, cache=TRUE, warning=FALSE}
+# 3. Linear Discriminant Analysis -model (with 5-fold cross validation repeated 3 times)
+    tc3 <- trainControl(method = "repeatedcv", number = 5, repeats = 10) # trainControl args
+    f3 <- train(classe ~., "lda", data = tra,
+                trControl = tc3, verbose = FALSE) # model 3 - LDA model
+    
+    #f3$finalModel # print final model
+    pr3 <- predict(f3, tes) # prediction for model 3
+    mod3 <- confusionMatrix(pr3, tes$classe)$overall[1] # model 3
+    mod3
+```
+```{r nb, echo=TRUE, cache=TRUE, warning=FALSE}
+# 4. Naive Bayes (with 5-fold cross validation repeated 3 times)
+    tc4 <- trainControl(method = "repeatedcv", number = 5, repeats = 10) # trainControl args
+    f4 <- train(classe ~., "nb", data = tra,
+                trControl = tc4, verbose = FALSE) # model 4 - Naive bayes model
+    
+    #f4$finalModel # print final model
+    pr4 <- predict(f4, tes) # prediction for model 4
+    mod4 <- confusionMatrix(pr4, tes$classe)$overall[1] # model 4
+    mod4
+```
+```{r knn, echo=TRUE, cache=TRUE, warning=FALSE}
+# 5. KNN (with 5-fold cross validation repeated 3 times)
+    tc5 <- trainControl(method = "repeatedcv", number = 5, repeats = 10) # trainControl args
+    f5 <- train(classe ~., "knn", data = tra,
+                trControl = tc5) # model 5 - KNN
+    
+    #f5$finalModel # print final model
+    pr5 <- predict(f5, tes) # prediction for model 5
+    mod5 <- confusionMatrix(pr5, tes$classe)$overall[1] # model 5
+    mod5
+```
+```{r bcart, echo=TRUE, cache=TRUE, warning=FALSE}
+# 6. Bagged CART (with bootsrapping repeated 10 times)
+    tc6 <- trainControl(method="boot", number=10) # trainControl args
+    f6 <- train(classe ~., "treebag", data = tra,
+                trControl = tc6) # model 6 - Bagged CART
+    
+    #f6$finalModel # print final model
+    pr6 <- predict(f6, tes) # prediction for model 6
+    mod6 <- confusionMatrix(pr6, tes$classe)$overall[1] # model 6
+    mod6
+``` 
+```{r acc, echo=TRUE, cache=TRUE, warning=FALSE}
+# accuracy of models
+acc <- data.frame(mod1, mod2, mod3, mod4, mod5, mod6)
+colnames(acc) <- c("Boosting", "Random forest", "LDA", "Naive Bayes", "KNN-model",  "Bagged CART")
+acc
+
+oserror <- 1- acc[2] # out of sample error
+rownames(oserror) <- "Expected out of sample error"
+oserror
+```
+<h3>Prediction</h3>
+I used the most accurate model (RF) for predicting the test data. The result was 20 correct predictions out of 20.
+
+```{r pred, echo=TRUE, cache=TRUE, warning=FALSE}
+# using best model for predictions - model 2 (RF) 
+pred <- data.frame(predict(f2, testing)) # prediction using model 2
